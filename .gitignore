@@ -30,3 +30,17 @@
 *.exe
 *.out
 *.app
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.hs_err_pid*
+
+# IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/

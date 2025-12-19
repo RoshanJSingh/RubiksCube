@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-# rubiks-cube-solver
-=======
-# Rubiks_Cube
-rubiks-cube-solver
+
 Rubik's Cube Solver
 This project is a Rubik's Cube solver implemented in C++. It provides multiple representations of the Rubik's Cube (3D array, 1D array, and bitboard) and uses various solving algorithms such as Depth-First Search (DFS), Breadth-First Search (BFS), Iterative Deepening Depth-First Search (IDDFS), and IDA*.
 
@@ -116,4 +112,4 @@ This project is licensed under the MIT License. See the LICENSE file for details
 Author
 Roshan J Singh - Project Creator
 
->>>>>>> f44e7b7b268231870859e056eec5bee82257b32a
+
