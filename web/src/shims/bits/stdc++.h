@@ -1,42 +1,71 @@
 // Minimal <bits/stdc++.h> replacement for non-GCC toolchains (Emscripten/libc++).
 // The project's headers include <bits/stdc++.h>, which only ships with libstdc++.
 // We put this directory first on the include path for the WASM build so the same
-// source compiles unchanged. It just pulls in the standard headers the code uses.
+// source compiles unchanged. It pulls in the standard headers the code uses
+// (notably <fstream>, which the pattern-database loader needs).
 #ifndef WEB_SHIM_BITS_STDCPP_H
 #define WEB_SHIM_BITS_STDCPP_H
 
-#include <algorithm>
-#include <array>
-#include <bitset>
+// C library
 #include <cassert>
 #include <cctype>
+#include <cerrno>
 #include <cfloat>
 #include <climits>
 #include <cmath>
+#include <cstdarg>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <cwchar>
+#include <cwctype>
+
+// Containers
+#include <array>
+#include <bitset>
 #include <deque>
-#include <functional>
-#include <iostream>
-#include <iterator>
-#include <limits>
+#include <forward_list>
 #include <list>
 #include <map>
-#include <memory>
-#include <numeric>
 #include <queue>
 #include <set>
-#include <sstream>
 #include <stack>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+// I/O
+#include <fstream>
+#include <iomanip>
+#include <ios>
+#include <iostream>
+#include <istream>
+#include <ostream>
+#include <sstream>
+#include <streambuf>
+
+// General utilities
+#include <algorithm>
+#include <chrono>
+#include <complex>
+#include <exception>
+#include <functional>
+#include <initializer_list>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <new>
+#include <numeric>
+#include <random>
+#include <ratio>
 #include <stdexcept>
 #include <string>
 #include <tuple>
-#include <unordered_map>
-#include <unordered_set>
+#include <typeinfo>
 #include <utility>
-#include <vector>
+#include <valarray>
 
 #endif // WEB_SHIM_BITS_STDCPP_H
