@@ -5,25 +5,19 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 /* ------------------------------------------------------------------ *
  *  Rubik's Cube Solver — frontend
  *
- *  The C++ engine (compiled to WebAssembly) is the brain: it takes a
- *  scramble and returns a solution. This file only handles rendering
- *  and animation. Move tokens use standard notation, and each token's
- *  (axis, layer, direction) below matches the C++ move definitions
- *  exactly (verified against RubiksCubeBitboard's u()/d()/r()...).
+ *  The C++ engine (compiled to WebAssembly) is the brain: given a
+ *  scramble it returns a solution. It runs inside a Web Worker so that
+ *  multi-second IDA* solves never freeze the 3D cube. This file handles
+ *  rendering, animation, and talking to the worker. Move tokens use
+ *  standard notation; each token's (axis, layer, direction) below
+ *  matches the C++ move definitions (verified against the bitboard model).
  * ------------------------------------------------------------------ */
 
-// ---- colors (match the C++ solved state: U=white L=green F=red R=blue B=orange D=yellow)
 const STICKER = {
-  px: 0x1457d6, // +X  RIGHT  blue
-  nx: 0x00a651, // -X  LEFT   green
-  py: 0xf6f7fb, // +Y  UP     white
-  ny: 0xffd400, // -Y  DOWN   yellow
-  pz: 0xd01f3c, // +Z  FRONT  red
-  nz: 0xff6a00, // -Z  BACK   orange
+  px: 0x1457d6, nx: 0x00a651, py: 0xf6f7fb, ny: 0xffd400, pz: 0xd01f3c, nz: 0xff6a00,
 };
 const BODY_COLOR = 0x0b0c14;
 
-// ---- move table: token -> [axis, layer(-1|1), dir]  (dir: +1 = +90°, -1 = -90°, 2 = 180°)
 const MOVES = {
   "U":  ['y',  1, -1], "U'": ['y',  1,  1], "U2": ['y',  1, 2],
   "D":  ['y', -1,  1], "D'": ['y', -1, -1], "D2": ['y', -1, 2],
@@ -34,8 +28,14 @@ const MOVES = {
 };
 const FACES = ['U', 'D', 'L', 'R', 'F', 'B'];
 const SUFFIX = ['', "'", '2'];
-const SP = 1.0;            // grid spacing between cubie centers
+const SP = 1.0;
 const HALF = Math.PI / 2;
+
+const ALGO_CFG = {
+  ida:   { label: 'IDA*',  min: 3, max: 12, def: 10, db: true,  hint: 'Optimal · corner pattern database · handles deep scrambles.' },
+  iddfs: { label: 'IDDFS', min: 3, max: 6,  def: 5,  db: false, hint: 'Optimal · iterative deepening · no database (shallow only).' },
+  dfs:   { label: 'DFS',   min: 3, max: 6,  def: 5,  db: false, hint: 'First solution found · bounded depth-first search.' },
+};
 
 // ===================================================================
 //  Scene
@@ -81,16 +81,12 @@ const cubies = [];
 const bodyMat = new THREE.MeshStandardMaterial({ color: BODY_COLOR, roughness: 0.55, metalness: 0.1 });
 const bodyGeo = new RoundedBoxGeometry(0.95, 0.95, 0.95, 4, 0.11);
 
-function makeStickerMat(color) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 0.05 });
-}
+const makeStickerMat = (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.34, metalness: 0.05 });
 const stickerMats = {
   px: makeStickerMat(STICKER.px), nx: makeStickerMat(STICKER.nx),
   py: makeStickerMat(STICKER.py), ny: makeStickerMat(STICKER.ny),
   pz: makeStickerMat(STICKER.pz), nz: makeStickerMat(STICKER.nz),
 };
-
-// thin rounded tiles for each facing
 const stickerGeo = {
   x: new RoundedBoxGeometry(0.06, 0.8, 0.8, 3, 0.07),
   y: new RoundedBoxGeometry(0.8, 0.06, 0.8, 3, 0.07),
@@ -101,13 +97,12 @@ function buildCube() {
   for (let i = -1; i <= 1; i++) {
     for (let j = -1; j <= 1; j++) {
       for (let k = -1; k <= 1; k++) {
-        if (i === 0 && j === 0 && k === 0) continue; // skip invisible core
+        if (i === 0 && j === 0 && k === 0) continue;
         const cubie = new THREE.Group();
         cubie.position.set(i * SP, j * SP, k * SP);
         cubie.userData.home = cubie.position.clone();
 
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        cubie.add(body);
+        cubie.add(new THREE.Mesh(bodyGeo, bodyMat));
 
         const addSticker = (geo, mat, pos) => {
           const s = new THREE.Mesh(geo, mat);
@@ -164,14 +159,14 @@ function rotateLayer(axis, layer, angle, duration) {
     if (duration <= 0) { finish(); return; }
 
     const start = performance.now();
-    const step = (now) => {
+    const stepFn = (now) => {
       const t = Math.min(1, (now - start) / duration);
-      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
       pivot.rotation[axis] = angle * e;
-      if (t < 1) requestAnimationFrame(step);
+      if (t < 1) requestAnimationFrame(stepFn);
       else finish();
     };
-    requestAnimationFrame(step);
+    requestAnimationFrame(stepFn);
   });
 }
 
@@ -212,13 +207,11 @@ function genScramble(n) {
   return out;
 }
 
-// internal consistency check: scramble then its exact inverse must solve
 function selfTest() {
   const seq = genScramble(14);
   seq.forEach(t => applyToken(t, 0));
   seq.slice().reverse().forEach(t => applyToken(invToken(t), 0));
-  const ok = isVisuallySolved();
-  console.log(`[cube self-test] move engine ${ok ? 'PASS ✓' : 'FAIL ✗'}`);
+  console.log(`[cube self-test] move engine ${isVisuallySolved() ? 'PASS ✓' : 'FAIL ✗'}`);
   resetCubeInstant();
 }
 
@@ -243,29 +236,91 @@ animate();
 selfTest();
 
 // ===================================================================
-//  WASM engine
+//  Engine worker
 // ===================================================================
-let engine = null; // WebCube instance
+const el = (id) => document.getElementById(id);
+let worker = null;
+let engineReady = false;
+let solveCounter = 0;
+const pendingSolves = new Map();
 
-async function loadEngine() {
+// db: 'none' | 'loading' | 'ready' | 'error'
+let dbState = 'none';
+let dbWaiters = [];
+
+function startWorker() {
   try {
-    const mod = await import('./rubiks.mjs');
-    const Module = await mod.default();
-    engine = new Module.WebCube();
-    return true;
+    worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
   } catch (err) {
-    console.error('Failed to load the C++ engine:', err);
+    console.error('Worker failed to start:', err);
     return false;
   }
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    switch (msg.type) {
+      case 'ready':
+        engineReady = true;
+        onEngineReady();
+        break;
+      case 'initError':
+        console.error('Engine init error:', msg.message);
+        onEngineFailed();
+        break;
+      case 'dbProgress':
+        showDbProgress(msg.pct);
+        break;
+      case 'dbReady':
+        dbState = 'ready';
+        hideDbProgress();
+        dbWaiters.forEach(r => r(true));
+        dbWaiters = [];
+        break;
+      case 'dbError':
+        console.error('DB load error:', msg.message);
+        dbState = 'error';
+        hideDbProgress();
+        dbWaiters.forEach(r => r(false));
+        dbWaiters = [];
+        break;
+      case 'solved': {
+        const resolve = pendingSolves.get(msg.id);
+        if (resolve) { pendingSolves.delete(msg.id); resolve(msg); }
+        break;
+      }
+    }
+  };
+  worker.onerror = (err) => { console.error('Worker error:', err.message); onEngineFailed(); };
+  return true;
+}
+
+function ensureDB() {
+  if (dbState === 'ready') return Promise.resolve(true);
+  if (dbState === 'error') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    dbWaiters.push(resolve);
+    if (dbState === 'none') {
+      dbState = 'loading';
+      showDbProgress(0);
+      worker.postMessage({ type: 'loadDB' });
+    }
+  });
+}
+
+function requestSolve(scramble, algo, maxDepth) {
+  return new Promise((resolve) => {
+    const id = ++solveCounter;
+    pendingSolves.set(id, resolve);
+    worker.postMessage({ type: 'solve', id, scramble, algo, maxDepth });
+  });
 }
 
 // ===================================================================
-//  UI wiring
+//  UI
 // ===================================================================
-const el = (id) => document.getElementById(id);
 const depthSlider = el('depth');
 const depthOut = el('depth-out');
-const depthHint = el('depth-hint');
+const algoHint = el('algo-hint');
+const segBtns = [...document.querySelectorAll('.seg-btn')];
 const scrambleBtn = el('scramble-btn');
 const solveBtn = el('solve-btn');
 const resetBtn = el('reset-btn');
@@ -273,37 +328,56 @@ const scrambleSeq = el('scramble-seq');
 const solutionSeq = el('solution-seq');
 const statMoves = el('stat-moves');
 const statTime = el('stat-time');
+const statAlgo = el('stat-algo');
 const loading = el('loading');
+const dbLoad = el('db-load');
+const dbBarFill = el('db-bar-fill');
+const dbPct = el('db-load-pct');
 
+let currentAlgo = 'ida';
 let currentScramble = [];
 let scrambled = false;
 let busy = false;
 
-depthSlider.addEventListener('input', () => {
-  depthOut.textContent = depthSlider.value;
-  depthHint.textContent = +depthSlider.value >= 6
-    ? 'Optimal solver · depth 6 can take a few seconds.'
-    : 'Optimal solver · finds the shortest solution.';
-});
+function showDbProgress(pct) { dbLoad.hidden = false; dbBarFill.style.width = pct + '%'; dbPct.textContent = pct + '%'; }
+function hideDbProgress() { dbLoad.hidden = true; }
+
+function applyAlgoConfig(algo) {
+  const cfg = ALGO_CFG[algo];
+  depthSlider.min = cfg.min;
+  depthSlider.max = cfg.max;
+  depthSlider.value = cfg.def;
+  depthOut.textContent = cfg.def;
+  algoHint.textContent = cfg.hint;
+  statAlgo.textContent = cfg.label;
+}
+
+function setAlgo(algo) {
+  if (algo === currentAlgo || busy) return;
+  currentAlgo = algo;
+  segBtns.forEach(b => b.classList.toggle('active', b.dataset.algo === algo));
+  applyAlgoConfig(algo);
+  doReset();
+  if (ALGO_CFG[algo].db && engineReady) ensureDB(); // prefetch DB in the background
+}
+
+depthSlider.addEventListener('input', () => { depthOut.textContent = depthSlider.value; });
+segBtns.forEach(b => b.addEventListener('click', () => setAlgo(b.dataset.algo)));
 
 function setBusy(state) {
   busy = state;
-  scrambleBtn.disabled = state;
+  scrambleBtn.disabled = state || !engineReady;
   resetBtn.disabled = state || (!scrambled && currentScramble.length === 0);
-  solveBtn.disabled = state || !engine || !scrambled;
+  solveBtn.disabled = state || !engineReady || !scrambled;
   depthSlider.disabled = state;
+  segBtns.forEach(b => (b.disabled = state));
 }
 
-function nextFrame() {
-  return new Promise(r => requestAnimationFrame(() => r()));
-}
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
 
 function renderSeq(target, tokens, emptyText) {
   target.innerHTML = '';
-  if (!tokens.length) {
-    target.innerHTML = `<span class="seq-empty">${emptyText || '—'}</span>`;
-    return;
-  }
+  if (!tokens.length) { target.innerHTML = `<span class="seq-empty">${emptyText || '—'}</span>`; return; }
   tokens.forEach((t) => {
     const chip = document.createElement('span');
     chip.className = 'move-chip';
@@ -322,21 +396,18 @@ async function playSequence(tokens, duration, seqTarget) {
 }
 
 async function doScramble() {
-  if (busy) return;
+  if (busy || !engineReady) return;
   setBusy(true);
   scrambleBtn.classList.add('busy');
 
   resetCubeInstant();
-  const depth = +depthSlider.value;
-  currentScramble = genScramble(depth);
+  currentScramble = genScramble(+depthSlider.value);
   renderSeq(scrambleSeq, currentScramble);
   renderSeq(solutionSeq, [], '—');
   statMoves.textContent = '—';
   statTime.textContent = '—';
 
-  await playSequence(currentScramble, 180, scrambleSeq);
-
-  if (engine) { engine.reset(); engine.applyMoves(currentScramble.join(' ')); }
+  await playSequence(currentScramble, 170, scrambleSeq);
   scrambled = true;
 
   scrambleBtn.classList.remove('busy');
@@ -344,28 +415,39 @@ async function doScramble() {
 }
 
 async function doSolve() {
-  if (busy || !engine || !scrambled) return;
+  if (busy || !engineReady || !scrambled) return;
+  const algo = currentAlgo;
   setBusy(true);
   solveBtn.classList.add('busy');
 
-  // make sure the engine reflects exactly what's on screen
-  engine.reset();
-  engine.applyMoves(currentScramble.join(' '));
+  if (ALGO_CFG[algo].db) {
+    const ok = await ensureDB();
+    if (!ok) {
+      solveBtn.classList.remove('busy');
+      algoHint.textContent = 'Could not load the database. Try IDDFS, or reload the page.';
+      setBusy(false);
+      return;
+    }
+  }
 
-  await nextFrame(); // let the spinner paint before the blocking solve
-  const t0 = performance.now();
-  const solStr = engine.solve(currentScramble.length);
-  const elapsed = performance.now() - t0;
-
-  const solution = solStr.trim().length ? solStr.trim().split(/\s+/) : [];
-  renderSeq(solutionSeq, solution, 'already solved');
-  statMoves.textContent = String(solution.length);
-  statTime.textContent = elapsed < 1000
-    ? `${Math.round(elapsed)} ms`
-    : `${(elapsed / 1000).toFixed(2)} s`;
-
+  await nextFrame();
+  const { solution, ms } = await requestSolve(currentScramble.join(' '), algo, currentScramble.length);
   solveBtn.classList.remove('busy');
-  await playSequence(solution, 280, solutionSeq);
+
+  if (solution === 'ERROR') {
+    renderSeq(solutionSeq, [], 'solver ran out of memory — try fewer moves');
+    statMoves.textContent = '—';
+    statTime.textContent = '—';
+    setBusy(false);
+    return;
+  }
+
+  const sol = solution.trim() ? solution.trim().split(/\s+/) : [];
+  renderSeq(solutionSeq, sol, 'already solved');
+  statMoves.textContent = String(sol.length);
+  statTime.textContent = ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+
+  await playSequence(sol, 280, solutionSeq);
 
   if (!isVisuallySolved()) {
     console.warn('Visual cube not solved after playback — snapping to solved state.');
@@ -376,30 +458,35 @@ async function doSolve() {
 }
 
 function doReset() {
-  if (busy) return;
   resetCubeInstant();
   currentScramble = [];
   scrambled = false;
   renderSeq(scrambleSeq, [], 'cube is solved');
   renderSeq(solutionSeq, [], '—');
-  statMoves.textContent = '—';
+  statMoves.textContent = engineReady ? '0' : '—';
   statTime.textContent = '—';
   setBusy(false);
 }
 
 scrambleBtn.addEventListener('click', doScramble);
 solveBtn.addEventListener('click', doSolve);
-resetBtn.addEventListener('click', doReset);
+resetBtn.addEventListener('click', () => { if (!busy) doReset(); });
+
+function onEngineReady() {
+  loading.classList.add('hidden');
+  statMoves.textContent = '0';
+  setBusy(false);
+  if (ALGO_CFG[currentAlgo].db) ensureDB(); // start fetching the DB up front
+}
+
+function onEngineFailed() {
+  loading.classList.add('hidden');
+  engineReady = false;
+  algoHint.textContent = 'Engine unavailable — solving is disabled. You can still explore the cube.';
+  statAlgo.textContent = 'offline';
+  scrambleBtn.disabled = false; // scrambling is pure JS, still works
+}
 
 // ---- boot
-(async () => {
-  const ok = await loadEngine();
-  loading.classList.add('hidden');
-  scrambleBtn.disabled = false;
-  if (ok) {
-    statMoves.textContent = '0';
-  } else {
-    depthHint.textContent = 'Engine unavailable — solving is disabled, but you can still explore the cube.';
-    el('stat-algo').textContent = 'offline';
-  }
-})();
+applyAlgoConfig(currentAlgo);
+if (!startWorker()) onEngineFailed();

@@ -1,2 +1,6 @@
 # Shell scripts must stay LF so they run in the Linux CI runner.
 *.sh text eol=lf
+
+# The pattern database is raw binary (nibble pairs) — never apply EOL conversion,
+# or it will be corrupted and fail the size check the C++ loader does.
+cornerDepth5V1.txt binary

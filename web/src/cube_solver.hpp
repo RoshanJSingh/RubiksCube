@@ -1,20 +1,28 @@
 // Thin web-facing wrapper around the existing C++ Rubik's Cube model + solvers.
 // No algorithm is reimplemented here: we use RubiksCubeBitboard for the model and
-// the project's IDDFS solver (which drives the existing DFS solver) to find an
-// optimal-length solution. This header is shared by the native test harness
-// (test_native.cpp, built with g++) and the Emscripten bindings (bindings.cpp).
+// the project's own solvers (DFS, IDDFS, and IDA* with the corner pattern database).
+// This header is shared by the native test harnesses (built with g++) and the
+// Emscripten bindings (bindings.cpp).
 
 #ifndef CUBE_SOLVER_HPP
 #define CUBE_SOLVER_HPP
 
 #include "bits/stdc++.h"
 
-// The model files define their classes inline, so including the .cpp files in a
-// single translation unit is the project's own usage pattern (see main.cpp).
+// The model + database implementation files define everything inline or out-of-line;
+// including the .cpp files in a single translation unit is the project's own usage
+// pattern (see main.cpp / CornerDBMaker.h).
 #include "../../Model/RubiksCube.cpp"
 #include "../../Model/RubiksCubeBitboard.cpp"
+
+#include "../../PatternDatabases/math.cpp"
+#include "../../PatternDatabases/NibbleArray.cpp"
+#include "../../PatternDatabases/PatternDatabase.cpp"
+#include "../../PatternDatabases/CornerPatternDatabase.cpp"
+
 #include "../../Solver/DFSSolver.h"
 #include "../../Solver/IDDFSSolver.h"
+#include "../../Solver/IDAstarSolver.h"
 
 using namespace std;
 
@@ -42,12 +50,25 @@ inline vector<string> splitTokens(const string &s)
     return out;
 }
 
+inline string movesToString(const vector<RubiksCube::MOVE> &moves)
+{
+    string out;
+    for (size_t i = 0; i < moves.size(); i++)
+    {
+        if (i)
+            out += " ";
+        out += RubiksCube::getMove(moves[i]);
+    }
+    return out;
+}
+
 // Stateful cube the frontend drives. The C++ engine is the single source of
-// truth for sticker colors, so the 3D view can never drift out of sync.
+// truth for the solution, so the 3D view can never drift out of sync.
 class WebCube
 {
 public:
     RubiksCubeBitboard cube;
+    string dbPath; // path to the corner pattern database inside the (virtual) FS
 
     void reset() { cube = RubiksCubeBitboard(); }
 
@@ -56,6 +77,8 @@ public:
         for (auto &t : splitTokens(tokens))
             cube.move(parseMove(t));
     }
+
+    void setDbPath(const string &path) { dbPath = path; }
 
     // 54 color letters (W/G/R/B/O/Y), faces in order U, L, F, R, B, D,
     // each face emitted row-major (row 0..2, col 0..2).
@@ -75,21 +98,36 @@ public:
 
     bool solved() const { return cube.isSolved(); }
 
-    // Solve the current state with iterative-deepening DFS up to maxDepth.
-    // Returns a space-separated token string; does NOT mutate this cube
-    // (the solver works on its own internal copy).
-    string solve(int maxDepth)
+    // Solve the current state. algo is "ida", "iddfs", or "dfs".
+    //  - "ida":   optimal, uses the corner pattern database (needs setDbPath),
+    //             handles deep scrambles fast. maxDepth is ignored.
+    //  - "iddfs": optimal via iterative-deepening DFS, no database (shallow only).
+    //  - "dfs":   bounded depth-first search, no database.
+    // Returns a space-separated token string; does NOT mutate this cube.
+    string solve(const string &algo, int maxDepth)
     {
-        IDDFSSolver<RubiksCubeBitboard, HashBitboard> solver(cube, maxDepth);
-        auto moves = solver.solve();
-        string out;
-        for (size_t i = 0; i < moves.size(); i++)
+        // Returns "ERROR" if the solver runs out of memory or throws — the deep
+        // IDA* hybrid keeps a visited set, so very deep scrambles can exhaust the
+        // heap. The UI caps the scramble depth to stay well inside the safe zone.
+        try
         {
-            if (i)
-                out += " ";
-            out += RubiksCube::getMove(moves[i]);
+            if (algo == "ida")
+            {
+                IDAstarSolver<RubiksCubeBitboard, HashBitboard> solver(cube, dbPath);
+                return movesToString(solver.solve());
+            }
+            if (algo == "dfs")
+            {
+                DFSSolver<RubiksCubeBitboard, HashBitboard> solver(cube, maxDepth);
+                return movesToString(solver.solve());
+            }
+            IDDFSSolver<RubiksCubeBitboard, HashBitboard> solver(cube, maxDepth);
+            return movesToString(solver.solve());
         }
-        return out;
+        catch (...)
+        {
+            return "ERROR";
+        }
     }
 };
 

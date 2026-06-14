@@ -49,12 +49,29 @@
       </div>
 
       <div class="control-block">
+        <span class="field-label">Algorithm</span>
+        <div class="seg" role="group" aria-label="Solver algorithm">
+          <button class="seg-btn active" data-algo="ida" type="button">IDA*</button>
+          <button class="seg-btn" data-algo="iddfs" type="button">IDDFS</button>
+          <button class="seg-btn" data-algo="dfs" type="button">DFS</button>
+        </div>
+        <p class="hint" id="algo-hint">Optimal · corner pattern database · handles deep scrambles.</p>
+      </div>
+
+      <div class="control-block">
         <div class="slider-row">
           <label for="depth">Scramble depth</label>
-          <output id="depth-out">5</output>
+          <output id="depth-out">10</output>
         </div>
-        <input type="range" id="depth" min="3" max="6" step="1" value="5" />
-        <p class="hint" id="depth-hint">Optimal solver · depth 6 may take a few seconds.</p>
+        <input type="range" id="depth" min="3" max="12" step="1" value="10" />
+      </div>
+
+      <div class="db-load" id="db-load" hidden>
+        <div class="db-load-row">
+          <span id="db-load-label">Loading solver database (48 MB)…</span>
+          <span id="db-load-pct">0%</span>
+        </div>
+        <div class="db-bar"><div class="db-bar-fill" id="db-bar-fill"></div></div>
       </div>
 
       <div class="button-row">
@@ -78,7 +95,7 @@
         </div>
         <div class="stat">
           <span class="stat-label">Algorithm</span>
-          <span class="stat-value small" id="stat-algo">IDA / IDDFS</span>
+          <span class="stat-value small" id="stat-algo">IDA*</span>
         </div>
       </div>
 

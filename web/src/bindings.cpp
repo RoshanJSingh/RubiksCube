@@ -12,6 +12,7 @@ EMSCRIPTEN_BINDINGS(rubiks_cube_module)
         .constructor<>()
         .function("reset", &WebCube::reset)
         .function("applyMoves", &WebCube::applyMoves)
+        .function("setDbPath", &WebCube::setDbPath)
         .function("state", &WebCube::state)
         .function("solved", &WebCube::solved)
         .function("solve", &WebCube::solve);
