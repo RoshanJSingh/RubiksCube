@@ -44,3 +44,10 @@
 *.iws
 *.ipr
 out/
+
+# CMake build dir
+build/
+
+# Web: generated WebAssembly artifacts (built by CI / build.sh)
+web/public/rubiks.mjs
+web/public/rubiks.wasm
