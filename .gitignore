@@ -51,3 +51,8 @@ build/
 # Web: generated WebAssembly artifacts (built by CI / build.sh)
 web/public/rubiks.mjs
 web/public/rubiks.wasm
+
+# Local editor / OS files
+.vscode/
+.claude/
+.DS_Store
