@@ -1,3 +1,0 @@
-C:/Users/rosha/OneDrive - iitkgp.ac.in/Desktop/rubiks-cube-solver-main/build/CMakeFiles/rubiks_cube_solver.dir
-C:/Users/rosha/OneDrive - iitkgp.ac.in/Desktop/rubiks-cube-solver-main/build/CMakeFiles/edit_cache.dir
-C:/Users/rosha/OneDrive - iitkgp.ac.in/Desktop/rubiks-cube-solver-main/build/CMakeFiles/rebuild_cache.dir
